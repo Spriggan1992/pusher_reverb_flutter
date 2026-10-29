@@ -27,20 +27,24 @@ void main() {
   late ReverbClient client;
 
   setUp(() {
-    sockets = [];
+    // Each client has its own list: a client of an earlier test must not
+    // add to this one.
+    final opened = <_Socket>[];
+    sockets = opened;
     client = ReverbClient.forTesting(
       host: 'localhost',
       port: 8080,
       appKey: 'app-key',
       channelFactory: (_) {
         final socket = _Socket();
-        sockets.add(socket);
+        opened.add(socket);
         return socket.channel;
       },
     );
   });
 
   tearDown(() {
+    client.disconnect();
     for (final socket in sockets) {
       socket.frames.close();
     }
@@ -55,18 +59,20 @@ void main() {
     verifyNever(sockets.last.sink.close());
   });
 
-  test('a reconnect scheduled before disconnect does not open a socket',
-      () async {
-    await client.connect();
-    await sockets.single.frames.close();
-    await pumpEventQueue();
+  test(
+    'a reconnect scheduled before disconnect does not open a socket',
+    () async {
+      await client.connect();
+      await sockets.single.frames.close();
+      await pumpEventQueue();
 
-    client.disconnect();
-    await Future<void>.delayed(_afterFirstReconnect);
+      client.disconnect();
+      await Future<void>.delayed(_afterFirstReconnect);
 
-    expect(sockets, hasLength(1));
-    expect(client.connectionState, ConnectionState.disconnected);
-  });
+      expect(sockets, hasLength(1));
+      expect(client.connectionState, ConnectionState.disconnected);
+    },
+  );
 
   test('a connect during a scheduled reconnect replaces it', () async {
     await client.connect();
