@@ -88,6 +88,10 @@ class ReverbClient {
   /// Number of reconnection attempts made.
   int _reconnectAttempts = 0;
 
+  /// Incremented by every [connect] and [disconnect]. A reconnect scheduled
+  /// before either of them is stale and does not run.
+  int _connectionGeneration = 0;
+
   /// Maximum delay between reconnection attempts (in seconds).
   static const int _maxReconnectDelay = 30;
 
@@ -495,7 +499,13 @@ class ReverbClient {
     _setConnectionState(ConnectionState.reconnecting);
     onReconnecting?.call();
 
+    final generation = _connectionGeneration;
     await Future.delayed(delay);
+
+    // A connect or disconnect during the delay replaced this attempt.
+    if (_manualDisconnect || generation != _connectionGeneration) {
+      return;
+    }
 
     try {
       await connect();
@@ -518,6 +528,16 @@ class ReverbClient {
 
       // Reset manual disconnect flag when explicitly connecting
       _manualDisconnect = false;
+      _connectionGeneration++;
+
+      // Close the previous socket. Its subscription is cancelled first, so
+      // its `onDone` does not schedule another reconnect.
+      final previousSubscription = _subscription;
+      final previousChannel = _channel;
+      _subscription = null;
+      _channel = null;
+      previousSubscription?.cancel();
+      previousChannel?.sink.close();
 
       _setConnectionState(ConnectionState.connecting);
       onConnecting?.call();
@@ -607,6 +627,7 @@ class ReverbClient {
     // Mark this as a manual disconnect to prevent auto-reconnect
     _manualDisconnect = true;
     _reconnectAttempts = 0;
+    _connectionGeneration++;
 
     _subscription?.cancel();
     _channel?.sink.close();
